@@ -45,6 +45,8 @@ Includes some error-checking such as:
 ### Equivalent code in Python:
 
 ```python
+from collections import deque
+
 input = [["HQ", ""], ["Office 1", "HQ"], ["Office 2", "HQ"], ["Office 3", "HQ"], ["Office 4", "HQ"], ["Office 5", "HQ"],
          ["Office 6", "HQ"], ["Suboffice 1-1", "Office 1"], ["Suboffice 1-2", "Office 1"], ["Suboffice 1-3", "Office 1"],
          ["Suboffice 2-1", "Office 2"], ["Suboffice 3-1", "Office 3"], ["Suboffice 3-2", "Office 3"],
