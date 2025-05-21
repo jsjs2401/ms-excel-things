@@ -2,7 +2,15 @@
 
 Showcase of some of the MS Excel things I've previously done.
 
-## Attribute Collator
+## Contents
+
+1. [Attribute Collator](#attribute-collator)
+2. [G-code Snake Pattern Generator](#g-code-snake-pattern-generator)
+3. [Organization Hierarchy Formatter](#organization-hierarchy-formatter)
+
+---
+
+# Attribute Collator
 
 ![Screenshot of first sheet in "Attribute Collator.xlsx"](https://github.com/jsjs2401/ms-excel-things/blob/main/images/Attribute%20Collator.png)
 
@@ -30,7 +38,201 @@ def attrCollator(input):
     return output
 ```
 
-## Organization Hierarchy Formatter
+---
+
+# G-code Snake Pattern Generator
+
+![Screenshot of "G-code snake pattern generator.xlsm" alongside the output g-code file](https://github.com/jsjs2401/ms-excel-things/blob/main/images/G-code%20snake%20pattern%20generator.png)
+
+Generates a snaking pattern for characterizing gel behaviour in a pneumatic syringe 3D printer (specifically the CellInk BioX, as that was what I worked with). Supports multimaterial printing. The gel extrusion rate is set at a constant "E1" in the code, but can be modified to suit filament extrusion printers by scaling it proportionally to the print speed.
+
+I made this mostly because it's hard to get slicers programs to behave fully consistently when you change the dimensions of the 3D model (sometimes it does diagonal movements instead), and sometimes I just want one layer of snaking pattern. It probably could have been more neatly coded in Python, but this was also for other people in my lab to use, since everyone has MS Excel installed, but not everyone has Python installed.
+
+It's meant to print snaking patterns like shown immediately below, although multimaterial cuboid structures can also be printed with the right settings. Multimaterial printing in this file is determined from the set percentage ("Percent Material 2"), using VBA's Rnd function, although it could be easily modified to print the different materials from a 2D lookup array if you have your own function to generate one. The pattern shown in the cube print was generated from a sum-of-sines algorithm.
+
+![Example image of the snaking pattern that can be printed](https://github.com/jsjs2401/ms-excel-things/blob/main/images/G-code%20snake%20pattern%201.png)
+![Example multimaterial prints of cubic structures using different settings in the pattern generator](https://github.com/jsjs2401/ms-excel-things/blob/main/images/G-code%20snake%20pattern%202.png)
+
+<details>
+         <summary><h3>VBA Code, if you don't want to download the Excel macro file</h3></summary>
+
+```vbnet
+Private baseLen, baseWid, lineSpace, printHeight, layerHeight As Double
+Private printSpeed1, printSpeed2, printhead1, printhead2, gCode As String
+Private numLayers, numLinesTotal, curPrinthead, curMat1Line, curMat2Line As Integer
+Private percentMat2 As Single
+
+Private startPosX, startPosY, posX, posY, posZ As Double
+
+Sub snakeCube2Pattern()
+
+'Initializing parameters from sheet into code
+With Sheet3
+    baseLen = .Range("B1").Value
+    baseWid = .Range("B2").Value
+    lineSpace = .Range("B3").Value
+    printHeight = .Range("B4").Value
+    layerHeight = .Range("B5").Value
+    printSpeed1 = " F" & .Range("B6").Value * 60
+    printSpeed2 = " F" & .Range("B7").Value * 60
+    numLinesTotal = WorksheetFunction.Floor_Precise(baseWid / lineSpace, 1) + 1
+    printhead1 = "T" & .Range("B8").Value - 1
+    printhead2 = "T" & .Range("B9").Value - 1
+    percentMat2 = .Range("B10").Value
+End With
+
+'Checks that all sheet parameters are filled
+If baseLen = 0 Or baseWid = 0 Or lineSpace = 0 Or printHeight = 0 Or layerHeight = 0 Or printSpeed1 = "" Or printSpeed2 = "" Or printhead1 = "" Or printhead2 = "" Then
+    Message = MsgBox("Make sure all values are filled up or non-zero.", vbOKOnly)
+    Exit Sub
+End If
+
+'Calculating and setting other variables from parameters
+numLayers = WorksheetFunction.Ceiling_Precise(printHeight / layerHeight, 1)
+startPosX = baseWid / 2
+startPosY = baseLen / 2
+gCode = "M83 ;Relative extrusion mode" & vbNewLine & _
+        "G21 ;Metric values" & vbNewLine & _
+        "G90 ;Absolute positioning" & vbNewLine & _
+        "M107 ;Start with the fan off" & vbNewLine & _
+        "G28 ;Home the printer" & vbNewLine & _
+        "G92 E0 ;Zero the extruder" & vbNewLine
+
+'Generate full g-code according to parameters
+Dim i As Integer
+For i = 1 To numLayers
+    posZ = Round((i - 1) * layerHeight, 2)
+    nextStr = "G1 Z" & posZ & " F2400"
+    gCode = gCode & vbNewLine & nextStr
+    gCode = gCode & vbNewLine & snakeLayer(i)
+Next i
+
+'Lifts up from the final point by 5mm
+nextStr = "G1 Z" & layerHeight * numLayers + 5 & " F2400"
+gCode = gCode & vbNewLine & vbNewLine & nextStr
+
+'Temporary for testing, will change to output to file when done
+'Sheet3.Range("A15").Value = gCode
+
+'Saves file in selected location
+SaveFileAs
+
+End Sub
+
+Sub SaveFileAs()
+
+Dim fso As Object
+Set fso = CreateObject("Scripting.FileSystemObject")
+Dim fileName As Variant
+Dim overwriteCheck As Integer
+
+SelectSaveAs:
+fileName = Application.GetSaveAsFilename(fileFilter:="g-code (*.gcode), *.gcode")
+If fileName <> False Then
+    If fso.fileExists(fileName) Then overwriteCheck = MsgBox("File already exists. Overwrite file?", vbYesNo)
+    If overwriteCheck = vbNo Then GoTo SelectSaveAs
+    
+    Dim txtfile As Object
+    Set txtfile = fso.CreateTextFile(fileName, True)
+    txtfile.WriteLine (gCode)
+    txtfile.Close
+    Set txtfile = Nothing
+End If
+Set fso = Nothing
+
+End Sub
+
+Function snakeLayer(i) As String 'Generates gcode for each layer
+
+posX = startPosX
+posY = altNum(i - 1) * startPosY 'Sets the starting X and Y positions for this layer
+posZ = Round((i - 1) * layerHeight, 2)
+
+Dim snakeLayerMat1, snakeLayerMat2 As String
+Dim j, prevMat As Integer
+
+If i <= 1 Or i >= numLayers Then 'For first or last layer, only print with Material 1
+    snakeLayer = printhead1 & vbNewLine & "G1 X" & startPosX & " Y" & altNum(i + 1) * startPosY & " Z" & posZ & printSpeed1 'Starting position
+    For j = 1 To numLinesTotal 'Prints snake pattern, going up and down Y axis, starting at +ve X and +/-ve Y
+        posY = startPosY * altNum(j) * altNum(i + 1)
+        nextStr = "G1 X" & posX & " Y" & posY & printSpeed1 & " E1"
+        snakeLayer = snakeLayer & vbNewLine & nextStr
+        
+        If j < numLinesTotal Then 'Adds extrusion movement across X if not last line
+            posX = Round(startPosX - j * lineSpace, 2)
+            nextStr = "G1 X" & posX & " Y" & posY & printSpeed1 & " E1"
+            snakeLayer = snakeLayer & vbNewLine & nextStr
+        End If
+        
+    Next j
+
+Else 'For non-edge layers, randomize the material according to the desired percentage:
+    snakeLayerMat1 = printhead1 & vbNewLine & "G1 X" & startPosX & " Y" & altNum(i + 1) * startPosY & " Z" & posZ & printSpeed1
+    posY = startPosY * altNum(i)
+    nextStr = "G1 X" & posX & " Y" & posY & printSpeed1 & " E1"
+    snakeLayerMat1 = snakeLayerMat1 & vbNewLine & nextStr 'Print first line as Material 1, starting at +ve X and +/-ve Y
+    
+    prevMat = 1
+    snakeLayerMat2 = printhead2
+    
+    For j = 2 To numLinesTotal - 1 'Prints snake pattern, going up and down Y axis, starting at +ve X and +/-ve Y
+        Randomize
+        If Rnd > percentMat2 Then
+            If j <= numLinesTotal Then 'Adds extrusion movement across X if not last line
+                posX = Round(startPosX - (j - 1) * lineSpace, 2)
+                nextStr = "G1 X" & posX & " Y" & posY & printSpeed1
+                If prevMat = 1 Then nextStr = nextStr & " E1"
+                snakeLayerMat1 = snakeLayerMat1 & vbNewLine & nextStr
+            End If
+            prevMat = 1
+            
+            posY = startPosY * altNum(i + 1) * altNum(j)
+            nextStr = "G1 X" & posX & " Y" & posY & printSpeed1 & " E1"
+            snakeLayerMat1 = snakeLayerMat1 & vbNewLine & nextStr
+        
+        Else
+            If j <= numLinesTotal Then 'Adds extrusion movement across X if not last line
+                posX = Round(startPosX - (j - 1) * lineSpace, 2)
+                nextStr = "G1 X" & posX & " Y" & posY & printSpeed2
+                If prevMat = 2 Then nextStr = nextStr & " E1"
+                snakeLayerMat2 = snakeLayerMat2 & vbNewLine & nextStr
+            End If
+            prevMat = 2
+            
+            posY = startPosY * altNum(i + 1) * altNum(j)
+            nextStr = "G1 X" & posX & " Y" & posY & printSpeed2 & " E1"
+            snakeLayerMat2 = snakeLayerMat2 & vbNewLine & nextStr
+            
+        End If
+
+    Next j
+    
+    posX = Round(startPosX - (numLinesTotal - 1) * lineSpace, 2)
+    nextStr = "G1 X" & posX & " Y" & posY & printSpeed1
+    If prevMat = 1 Then nextStr = nextStr & " E1"
+    snakeLayerMat1 = snakeLayerMat1 & vbNewLine & nextStr
+    posY = startPosY * altNum(i + 1) * altNum(numLinesTotal)
+    nextStr = "G1 X" & posX & " Y" & posY & printSpeed1 & " E1"
+    snakeLayerMat1 = snakeLayerMat1 & vbNewLine & nextStr 'Prints last line as Material 1
+    
+    snakeLayer = snakeLayer & vbNewLine & snakeLayerMat1 & vbNewLine & snakeLayerMat2
+    
+End If
+
+End Function
+
+Function altNum(var) As Integer 'Returns 1 if odd numbers, -1 if even numbers
+
+altNum = (-1) ^ (var Mod 2)
+
+End Function
+```
+
+</details>
+
+---
+
+# Organization Hierarchy Formatter
 
 ![Screenshot of first sheet in "Organization Hierarchy Formatter.xlsx"](https://github.com/jsjs2401/ms-excel-things/blob/main/images/Organization%20Hierarchy%20Formatter.png)
 
